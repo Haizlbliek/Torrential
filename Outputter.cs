@@ -6,10 +6,10 @@ using Veldrid;
 public class Outputter {
 	public static void Output(GraphicsDevice gd, ResourceFactory factory, Texture drawingCanvas) {
 		TextureDescription stagingDesc = TextureDescription.Texture2D(
-			width: Program.CanvasWidth,
-			height: Program.CanvasHeight,
+			width: LevelRenderer.CanvasWidth,
+			height: LevelRenderer.CanvasHeight,
 			mipLevels: 1,
-			arrayLayers: Program.LayerCount,
+			arrayLayers: LevelRenderer.LayerCount,
 			format: PixelFormat.R8_G8_B8_A8_UNorm,
 			usage: TextureUsage.Staging
 		);
@@ -34,10 +34,10 @@ public class Outputter {
 			dstMipLevel: 0,
 			dstBaseArrayLayer: 0,
 
-			width: Program.CanvasWidth,
-			height: Program.CanvasHeight,
+			width: LevelRenderer.CanvasWidth,
+			height: LevelRenderer.CanvasHeight,
 			depth: 1,
-			layerCount: Program.LayerCount
+			layerCount: LevelRenderer.LayerCount
 		);
 
 		copyCl.End();
@@ -48,21 +48,21 @@ public class Outputter {
 		ImageWriter pngWriter = new ImageWriter();
 		Directory.CreateDirectory("Outputs");
 
-		for (uint layer = 0; layer < Program.LayerCount; layer++) {
+		for (uint layer = 0; layer < LevelRenderer.LayerCount; layer++) {
 			MappedResource mappedView = gd.Map(stagingTexture, MapMode.Read, subresource: layer);
 
 			int rowPitch = (int) mappedView.RowPitch;
-			byte[] localBuffer = new byte[Program.CanvasWidth * Program.CanvasHeight * 4];
+			byte[] localBuffer = new byte[LevelRenderer.CanvasWidth * LevelRenderer.CanvasHeight * 4];
 
 			unsafe {
 				byte* srcPtr = (byte*) mappedView.Data;
 
-				for (int row = 0; row < Program.CanvasHeight; row++) {
+				for (int row = 0; row < LevelRenderer.CanvasHeight; row++) {
 					Marshal.Copy(
 						source: (IntPtr) (srcPtr + (row * rowPitch)),
 						destination: localBuffer,
-						startIndex: (int) (row * Program.CanvasWidth * 4),
-						length: (int) (Program.CanvasWidth * 4)
+						startIndex: (int) (row * LevelRenderer.CanvasWidth * 4),
+						length: (int) (LevelRenderer.CanvasWidth * 4)
 					);
 				}
 			}
@@ -70,14 +70,14 @@ public class Outputter {
 			gd.Unmap(stagingTexture, subresource: layer);
 
 			using FileStream fileStream = File.Create($"Outputs/layer_{layer}.png");
-			pngWriter.WritePng(localBuffer, (int) Program.CanvasWidth, (int) Program.CanvasHeight, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, fileStream);
+			pngWriter.WritePng(localBuffer, (int) LevelRenderer.CanvasWidth, (int) LevelRenderer.CanvasHeight, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, fileStream);
 		}
 	}
 
 	public static void OutputCombined(GraphicsDevice gd, ResourceFactory factory, Texture drawingCanvas) {
-		uint width = Program.CanvasWidth;
-		uint height = Program.CanvasHeight;
-		uint layers = Program.LayerCount;
+		uint width = LevelRenderer.CanvasWidth;
+		uint height = LevelRenderer.CanvasHeight;
+		uint layers = LevelRenderer.LayerCount;
 
 		using Texture stagingTexture = factory.CreateTexture(
 			TextureDescription.Texture2D(
