@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -21,6 +20,7 @@ public class LevelRenderer : IDisposable {
 	private readonly Framebuffer[] framebuffers = [];
 	private readonly Pipeline pipeline;
 	private readonly CommandList commandList;
+	private readonly List<BlitInstance>[] buckets;
 
 	private LevelData? level;
 	private List<TileData> tiles = [];
@@ -101,6 +101,10 @@ public class LevelRenderer : IDisposable {
 		this.pipeline = this.factory.CreateGraphicsPipeline(pipelineDesc);
 
 		this.commandList = this.factory.CreateCommandList();
+
+		this.buckets = new List<BlitInstance>[LayerCount];
+		for (int i = 0; i < LayerCount; i++)
+			this.buckets[i] = [];
 	}
 
 	public GraphicsDevice CreateGraphicsDevice() {
@@ -176,11 +180,12 @@ public class LevelRenderer : IDisposable {
 		if (this.level == null || this.atlas == null || this.resourceSet == null)
 			throw new Exception("Called Render before LoadLevel");
 
-		List<BlitInstance> drawOperations = [];
-
 		for (uint x = 0; x < this.level.Width; x++) {
 			for (uint y = 0; y < this.level.Height; y++) {
 				for (uint z = 0; z < 3; z++) {
+					if (this.level.Geometry[x, y][z].Type == 0)
+						continue;
+
 					LevelData.Material? mat = this.level.Materials[x, y][z];
 					if (mat == null || !mat.Tile)
 						continue;
@@ -189,9 +194,7 @@ public class LevelRenderer : IDisposable {
 
 					uint sandOffset = tile.Type == TileType.SandType ? 1u : 0u;
 					uint depth = z * 10 + sandOffset;
-					bool randomPerLayer =
-						tile.Type == TileType.RockType ||
-						tile.Type == TileType.SandType;
+					bool randomPerLayer = tile.Type == TileType.RockType || tile.Type == TileType.SandType;
 
 					uint tileRandom = CustomRandom.Get(this.level.TileSeed, x, y, z);
 
@@ -208,7 +211,7 @@ public class LevelRenderer : IDisposable {
 								continue;
 							}
 
-							drawOperations.Add(new BlitInstance(
+							this.buckets[depth].Add(new BlitInstance(
 								coord.X,
 								coord.Y,
 								coord.Width,
@@ -227,24 +230,20 @@ public class LevelRenderer : IDisposable {
 				}
 			}
 		}
-		drawOperations.Sort(
-			(a, b) => a.DestLayer.CompareTo(b.DestLayer)
-		);
 
-		uint[] layerStarts = new uint[LayerCount];
-		uint[] layerCounts = new uint[LayerCount];
-
-		foreach (BlitInstance instance in drawOperations) {
-			layerCounts[instance.DestLayer]++;
+		int totalInstancesCount = 0;
+		for (uint layer = 0; layer < LayerCount; layer++) {
+			totalInstancesCount += this.buckets[layer].Count;
 		}
 
-		for (int i = 1; i < LayerCount; i++) {
-			layerStarts[i] = layerStarts[i - 1] + layerCounts[i - 1];
+		if (totalInstancesCount == 0) {
+			for (uint layer = 0; layer < LayerCount; layer++)
+				this.buckets[layer].Clear();
+
+			return;
 		}
 
-		BlitInstance[] instances = [.. drawOperations];
-
-		uint instanceBufferSize = (uint) (instances.Length * Marshal.SizeOf<BlitInstance>());
+		uint instanceBufferSize = (uint) (totalInstancesCount * Marshal.SizeOf<BlitInstance>());
 
 		if (this.instanceBuffer == null || instanceBufferSize > this.instanceBufferCapacity) {
 			this.instanceBuffer?.Dispose();
@@ -262,29 +261,44 @@ public class LevelRenderer : IDisposable {
 			);
 		}
 
-		if (instances.Length > 0)
-			this.gd.UpdateBuffer(this.instanceBuffer, 0, instances);
+		BlitInstance[] allInstances = new BlitInstance[totalInstancesCount];
+		uint[] layerBufferOffsets = new uint[LayerCount];
+		int currentWriteIndex = 0;
+
+		for (uint layer = 0; layer < LayerCount; layer++) {
+			layerBufferOffsets[layer] = (uint)(currentWriteIndex * Marshal.SizeOf<BlitInstance>());
+			var bucket = this.buckets[layer];
+			
+			if (bucket.Count > 0) {
+				bucket.CopyTo(allInstances, currentWriteIndex);
+				currentWriteIndex += bucket.Count;
+			}
+		}
+
+		this.gd.UpdateBuffer(this.instanceBuffer, 0, allInstances);
 
 		this.commandList.Begin();
 
 		for (uint layer = 0; layer < LayerCount; layer++) {
-			this.commandList.SetFramebuffer(this.framebuffers[layer]);
-
-			this.commandList.ClearColorTarget(0, RgbaFloat.Clear);
-
-			if (layerCounts[layer] == 0)
+			uint count = (uint) this.buckets[layer].Count;
+			if (count == 0)
 				continue;
+
+			this.commandList.SetFramebuffer(this.framebuffers[layer]);
+			this.commandList.ClearColorTarget(0, RgbaFloat.Clear);
 
 			this.commandList.SetPipeline(this.pipeline);
 			this.commandList.SetGraphicsResourceSet(0, this.resourceSet);
-			this.commandList.SetVertexBuffer(0, this.instanceBuffer);
+			this.commandList.SetVertexBuffer(0, this.instanceBuffer, layerBufferOffsets[layer]);
 
 			this.commandList.Draw(
 				vertexCount: 4,
-				instanceCount: layerCounts[layer],
+				instanceCount: count,
 				vertexStart: 0,
-				instanceStart: layerStarts[layer]
+				instanceStart: 0
 			);
+
+			this.buckets[layer].Clear();
 		}
 
 		this.commandList.End();
