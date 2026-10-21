@@ -161,7 +161,7 @@ public static partial class Program {
 
 
 		using TextureView arrayView = factory.CreateTextureView(atlas.Texture);
-		using Sampler sampler = factory.CreateSampler(SamplerDescription.Linear);
+		using Sampler sampler = factory.CreateSampler(SamplerDescription.Point);
 
 		using ResourceSet resourceSet = factory.CreateResourceSet(new ResourceSetDescription(
 			resourceLayout,
